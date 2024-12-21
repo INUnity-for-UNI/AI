@@ -2,7 +2,7 @@
 torch
 python-dotenv
 google-generativeai
-transformer
+transformers
 
 # emb-search
 konlpy
