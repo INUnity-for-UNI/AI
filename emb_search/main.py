@@ -1,57 +1,49 @@
-from konlpy.tag import Okt
-from fasttext import load_model
 import numpy as np
+from tqdm import tqdm
 from sklearn.metrics.pairwise import cosine_similarity
-import re
-import time
-from functools import lru_cache
+from utils.emb_search import VectorizeService, Query
 
+# 메인 코드
+if __name__ == '__main__':
+    # 공지사항 벡터 불러오기
+    notice_vectors = np.load('./DB/notice_vectors.npy', allow_pickle=True)
 
-notices = []
-with open('./DB/notices.txt', 'r') as file:
-    for line in file:
-        notices.append(line.strip())
+    # 공지사항 불러오기
+    notices = []
+    with open('./DB/notices.txt', 'r') as file:
+        for line in file:
+            notices.append(line.strip())
 
-# 1. 형태소 분석기 객체 생성 (공지사항 제목 -> 명사, 동사 등으로 변경)
-okt = Okt()
+    # VectorizeService 초기화
+    model_path = './models/cc.ko.300.bin'
+    vectorizer = VectorizeService(model_path=model_path)
 
-# 2. FastText 모델 로드
-fasttext_model_path = "./models/cc.ko.300.bin"  # 영어와 한국어를 포함하는 FastText 모델 경로
-fasttext_model = load_model(fasttext_model_path)
+    # 사용자 검색어 처리
+    query = Query(text='STARinU')
+    query_vectors = query.to_vector(vectorizer)
 
-# 3. 벡터 변환 함수
-def words2vec(text):
-    eng_text = re.findall(r'[a-zA-Z]+', text)
-    eng_text = [e.lower() for e in eng_text]
-    words = okt.nouns(text)
-    words.extend(eng_text)
-    vectors = []
-    for word in words:
-        vectors.append(fasttext_model.get_word_vector(word))
-    return np.array(vectors)
+    # 유사도 계산
+    similarities = []
+    for notice_vecs in notice_vectors:
+        if len(notice_vecs) == 0:  # 공지사항에 명사가 없을 경우 (이런 일 없겠지만 발생하면 귀찮으니)
+            similarities.append(0)
+            continue
 
-def sentence2vec(sentence):
-    vectors = words2vec(sentence)
-    if len(vectors) == 0:  # 벡터가 비어있는 경우
-        return np.zeros(300)
-    return np.mean(vectors, axis=0)  # 300차원 vector return
+        # 각 단어 벡터에 대한 유사도 계산
+        word_similarities = []
+        for query_vector in query_vectors:
+            word_sim = cosine_similarity(query_vector.reshape(1, -1), notice_vecs).max()
+            word_similarities.append(word_sim)
 
-# 4. 공지사항 데이터 벡터화
-notice_vectors = np.load('./DB/notice_vectors.npy')
+        # 최대 유사도의 평균 계산
+        avg_similarity = np.mean(word_similarities)
+        similarities.append(avg_similarity)
 
-# 단어 벡터 얻기
-query = '스타인유'
+    # 가장 유사한 공지사항 찾기 (상위 10개)
+    top_k_indices = np.argsort(similarities)[-10:][::-1]
+    top_k_notices = [notices[i] for i in top_k_indices]
 
-# 검색 시간 측정
-
-query_vector = sentence2vec(query).reshape(1, -1)   # 이 단계에서 많은 시간 소요
-
-similarities = cosine_similarity(query_vector, notice_vectors).flatten()
-
-sorted_indices = np.argsort(-similarities)
-
-top_k = 5  # 상위 검색 결과 설정
-print("검색어:", query)
-print("가장 유사한 공지사항:")
-for rank, idx in enumerate(sorted_indices[:top_k], start=1):
-    print(f"{rank}. {notices[idx]} (유사도: {similarities[idx]:.4f})")
+    print("검색어:", query.text)
+    print("가장 유사한 공지사항 제목 10개:")
+    for i, index in enumerate(top_k_indices, 1):
+        print(f"{i}. {notices[index]} (유사도 점수: {similarities[index]:.4f})")
